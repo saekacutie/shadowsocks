@@ -71,7 +71,7 @@ gather_config() {
     echo -e " ${C_ACCENT}[4]${RESET} asia-southeast1"
     echo -e " ${C_ACCENT}[5]${RESET} europe-west1"
     echo -e " ${C_ACCENT}[6]${RESET} europe-west4"
-    read -p "$(echo -e "${C_INFO}[?]${RESET} Select region [1-6] (default: us-central1): ")" REGION_CHOICE
+    read -r -p "$(echo -e "${C_INFO}[?]${RESET} Select region [1-6] (default: us-central1): ")" REGION_CHOICE
     case "${REGION_CHOICE:-1}" in
         1) REGION="us-central1" ;; 2) REGION="us-east1" ;; 3) REGION="asia-east1" ;;
         4) REGION="asia-southeast1" ;; 5) REGION="europe-west1" ;; 6) REGION="europe-west4" ;;
@@ -81,14 +81,14 @@ gather_config() {
     echo -e "${C_HEADER}════════════════════════════════════════════════════════════════════════════${RESET}"
     echo ""
 
-    read -p "$(echo -e "${C_INFO}[?]${RESET} Service name (default: shadowsocks-ws): ")" SERVICE_NAME_INPUT
+    read -r -p "$(echo -e "${C_INFO}[?]${RESET} Service name (default: shadowsocks-ws): ")" SERVICE_NAME_INPUT
     SERVICE_NAME="${SERVICE_NAME_INPUT:-shadowsocks-ws}"
     SERVICE_NAME=$(echo "$SERVICE_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
     if [ -z "$SERVICE_NAME" ]; then SERVICE_NAME="shadowsocks-ws"; fi
     echo -e "${C_SUCCESS}[✔]${RESET} Service name: ${BOLD}${SERVICE_NAME}${RESET}"
     echo ""
 
-    read -p "$(echo -e "${C_INFO}[?]${RESET} Password (default: auto-generated): ")" PASSWORD_INPUT
+    read -r -p "$(echo -e "${C_INFO}[?]${RESET} Password (default: auto-generated): ")" PASSWORD_INPUT
     PASSWORD="${PASSWORD_INPUT:-$(tr -dc A-Za-z0-9 </dev/urandom | head -c16)}"
     echo -e "${C_SUCCESS}[✔]${RESET} Password: ${BOLD}${PASSWORD}${RESET}"
     echo ""
@@ -102,7 +102,7 @@ gather_config() {
     echo -e " ${C_ACCENT}[4]${RESET} 2 vCPU, 4Gi (recommended)"
     echo -e " ${C_ACCENT}[5]${RESET} 4 vCPU, 8Gi"
     echo -e " ${C_ACCENT}[6]${RESET} 4 vCPU, 16Gi"
-    read -p "$(echo -e "${C_INFO}[?]${RESET} Choose config [1-6] (default: 4): ")" CPU_RAM_CHOICE
+    read -r -p "$(echo -e "${C_INFO}[?]${RESET} Choose config [1-6] (default: 4): ")" CPU_RAM_CHOICE
     CPU_RAM_CHOICE="${CPU_RAM_CHOICE:-4}"
     case $CPU_RAM_CHOICE in
         1) CPU="1"; MEMORY="512Mi" ;; 2) CPU="1"; MEMORY="1Gi" ;;
@@ -114,12 +114,12 @@ gather_config() {
     echo -e "${C_HEADER}════════════════════════════════════════════════════════════════════════════${RESET}"
     echo ""
 
-    read -p "$(echo -e "${C_INFO}[?]${RESET} Decoy domain (e.g. smart.com.ph): ")" DECOY_DOMAIN
+    read -r -p "$(echo -e "${C_INFO}[?]${RESET} Decoy domain (e.g. smart.com.ph): ")" DECOY_DOMAIN
     DECOY_DOMAIN="${DECOY_DOMAIN:-smart.com.ph}"
     echo -e "${C_SUCCESS}[✔]${RESET} Decoy domain: ${BOLD}${DECOY_DOMAIN}${RESET}"
     echo ""
 
-    read -p "$(echo -e "${C_INFO}[?]${RESET} WS path (default: /ss-ws): ")" WS_PATH_INPUT
+    read -r -p "$(echo -e "${C_INFO}[?]${RESET} WS path (default: /ss-ws): ")" WS_PATH_INPUT
     WS_PATH="${WS_PATH_INPUT:-/ss-ws}"
     echo -e "${C_SUCCESS}[✔]${RESET} WS path: ${BOLD}${WS_PATH}${RESET}"
     echo ""
@@ -133,7 +133,6 @@ deploy() {
     BUILD_DIR=$(mktemp -d)
     cd "$BUILD_DIR"
 
-    # Xray config — Shadowsocks inbound on internal port, Nginx handles TLS + decoy
     cat <<EOF > xray-config.json
 {
   "log": {"loglevel": "none"},
@@ -171,7 +170,6 @@ deploy() {
 }
 EOF
 
-    # Nginx — TLS termination, decoy site, WebSocket proxy to Xray
     cat <<'NGINXEOF' > nginx.conf
 worker_processes auto;
 events { worker_connections 1024; }
@@ -190,10 +188,7 @@ http {
         listen 8080;
         server_name _;
 
-        # Decoy: visitors see the external site
         location / {
-            proxy_websocket_ping on;
-            proxy_websocket_ping_interval 20s;
             proxy_pass https://DECOY_PLACEHOLDER;
             proxy_ssl_server_name on;
             proxy_set_header Host DECOY_PLACEHOLDER;
@@ -204,7 +199,6 @@ http {
             proxy_pass_header Server;
         }
 
-        # Shadowsocks WebSocket endpoint
         location = SSPATH_PLACEHOLDER {
             if ($http_upgrade != "websocket") {
                 return 404;
@@ -216,6 +210,8 @@ http {
             proxy_set_header Host $host;
             proxy_read_timeout 86400s;
             proxy_send_timeout 86400s;
+            proxy_websocket_ping on;
+            proxy_websocket_ping_interval 20s;
             proxy_buffering off;
             proxy_request_buffering off;
             tcp_nodelay on;
@@ -254,8 +250,9 @@ DOCKEREOF
     IMAGE="gcr.io/$PROJECT_ID/$SERVICE_NAME"
 
     echo -e "${C_INFO}[*]${RESET} Building container with Cloud Build..."
-    if ! gcloud builds submit --tag "$IMAGE" . --quiet 2>&1 | tail -5; then
-        echo -e "${C_ERROR}[✘]${RESET} Build failed."
+    if ! gcloud builds submit --tag "$IMAGE" . --quiet > build.log 2>&1; then
+        echo -e "${C_ERROR}[✘]${RESET} Build failed. Last 20 lines:"
+        tail -20 build.log
         cd ~; rm -rf "$BUILD_DIR"
         return 1
     fi
@@ -294,12 +291,11 @@ DOCKEREOF
     echo -e "${C_SUCCESS}║${RESET}  ${CYAN}Decoy:${RESET}   ${BOLD}${DECOY_DOMAIN}${RESET}"
     echo -e "${C_SUCCESS}╚════════════════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
-    echo "Shadowsocks SIP008 URL:"
+    echo -e "${C_INFO}Shadowsocks SIP008 URL:${RESET}"
     echo "ss://$(echo -n "aes-256-gcm:${PASSWORD}@${CLEAN_HOST}:443?plugin=v2ray-plugin;tls;host=${CLEAN_HOST};path=${WS_PATH}" | base64 -w0)#${SERVICE_NAME}"
     echo ""
 
     cd ~; rm -rf "$BUILD_DIR"
-    return 0
 }
 
 # Run

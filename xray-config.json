@@ -15,6 +15,7 @@
         "security": "none",
         "wsSettings": {
           "path": "/ss-ws"
+          "heartbeatPeriod": 25
         }
       }
     }

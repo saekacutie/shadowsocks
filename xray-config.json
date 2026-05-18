@@ -7,7 +7,7 @@
       "protocol": "shadowsocks",
       "settings": {
         "method": "aes-256-gcm",
-        "password": "saeka",
+        "password": "YOUR_PASSWORD",
         "network": "tcp,udp"
       },
       "streamSettings": {

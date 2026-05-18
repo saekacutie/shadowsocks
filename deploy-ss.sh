@@ -192,6 +192,8 @@ http {
 
         # Decoy: visitors see the external site
         location / {
+            proxy_websocket_ping on;
+            proxy_websocket_ping_interval 20s;
             proxy_pass https://DECOY_PLACEHOLDER;
             proxy_ssl_server_name on;
             proxy_set_header Host DECOY_PLACEHOLDER;
